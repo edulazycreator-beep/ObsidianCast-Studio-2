@@ -1,0 +1,76 @@
+name: Android Multi-Camera Studio CI Build
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Build Debug & Release APK + Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 3. Setup Android SDK (Skip Deprecated 'tools' Package)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - name: 4. Install Required Android SDK Packages (API 34 & Build-Tools 34.0.0)
+        run: |
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "${ANDROID_HOME}/cmdline-tools" -name sdkmanager -type f | sort -V | tail -n 1)
+          fi
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: 5. Setup Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: 6. Generate Valid Gradle Wrapper & Set Permissions
+        working-directory: ${{ hashFiles('android-studio-project/settings.gradle.kts') != '' && 'android-studio-project' || '.' }}
+        run: |
+          gradle wrapper --gradle-version 8.7
+          chmod +x ./gradlew
+
+      - name: 7. Run Unit Tests
+        working-directory: ${{ hashFiles('android-studio-project/settings.gradle.kts') != '' && 'android-studio-project' || '.' }}
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: 8. Build Debug APK
+        working-directory: ${{ hashFiles('android-studio-project/settings.gradle.kts') != '' && 'android-studio-project' || '.' }}
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: 9. Build Release APK (Uses Release Keystore if Configured or Debug Signing Fallback)
+        working-directory: ${{ hashFiles('android-studio-project/settings.gradle.kts') != '' && 'android-studio-project' || '.' }}
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: 10. Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ObsidianCast-Debug-APK
+          path: |
+            **/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: 11. Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ObsidianCast-Release-APK
+          path: |
+            **/app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
